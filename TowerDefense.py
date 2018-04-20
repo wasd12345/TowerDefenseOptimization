@@ -166,17 +166,18 @@ class Environment():
 
     #Different coverage profiles: how well tower X covers (protects) target Y
     def coverage_profiles(self):
-        def linear(self):
+        def linear():
             rmax = 50.
-            pass
-        def inverse_r(self):
-            pass
-        def inverse_r2(self):
-            pass
+        def inverse_r():
+            K = 50.
+            return 1. / (self.distances_towers_targets + K)
+        def inverse_r2():
+            K = 50.
+            return 1. / (self.distances_towers_targets + K)**2
         
-        if self.coverage_profile_type == 'linear': return linear(self.distances_towers_targets)
-        if self.coverage_profile_type == 'inverse_r': return inverse_r(self.distances_towers_targets)
-        if self.coverage_profile_type == 'inverse_r2': return inverse_r2(self.distances_towers_targets)
+        if self.coverage_profile_type == 'linear': return linear()
+        if self.coverage_profile_type == 'inverse_r': return inverse_r()
+        if self.coverage_profile_type == 'inverse_r2': return inverse_r2()
             
 
     #Calculate the voerage values for each tower to each target, depdending on
@@ -232,6 +233,7 @@ class Environment():
         def get_unobstructed_coverages():
             self.unobstructed_coverages = self.coverage_profiles()
             
+            
         def get_final_coverages():
             get_tower_target_distances()
             get_occluded()            
@@ -242,6 +244,7 @@ class Environment():
         
         self.coverage_matrix = get_final_coverages()
         print(self.obstructed_mask)
+        print(self.unobstructed_coverages)
         print(self.distances_towers_targets)        
         print(self.coverage_matrix)
      
@@ -277,10 +280,10 @@ class Environment():
 
     #Get the optimal placement of the towers at the allowed tower sites
     def solve_environment(self):
-        def debug_graph(self):
+        def debug_graph():
             pass
-        def solve_placement(self):
-            #self.get_tower_target_coverages()
+        def solve_placement():
+            #Run iterative
             pass        
     
     
@@ -300,7 +303,7 @@ if __name__ == '__main__':
                    'N_targets':22,#266,
                    'N_tower_sites':33,#302,
                    'N_towers':22,
-                   'coverage_profile_type':'linear'
+                   'coverage_profile_type':'inverse_r'
 #                   'coordinates__obstacles':[(0,0,44,44)],
 #                   'coordinates__targets':[(0,0),(88,66)],
 #                   'coordinates__tower_sites':[(99,107),(377,288)]
@@ -314,10 +317,8 @@ if __name__ == '__main__':
     env = Environment(params_dict)
     env.initialize_random_map()
     env.visualize_environment('initial')
-    
     env.get_tower_target_coverages()
 
     
-    x=eeee
     env.solve_environment()
     env.visualize_environment('solved')
