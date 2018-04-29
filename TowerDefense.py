@@ -26,6 +26,9 @@ Several variations:
     expected value of saved structures
     - others to come.
 
+
+
+>activate cvxpy_env
 """
 
 
@@ -43,6 +46,9 @@ from sklearn.metrics.pairwise import pairwise_distances
 class Environment():
     
     def __init__(self,params_dict):
+        
+        self.PROBLEM_VARIATION = params_dict['PROBLEM_VARIATION']
+        
         self.random_seed = params_dict['random_seed']
         self.map_dimensions = params_dict['map_dimensions']#height(y),width(x)
         self.N_obstacles = params_dict['N_obstacles']
@@ -51,6 +57,7 @@ class Environment():
         
         self.N_tower_sites = params_dict['N_tower_sites']
         self.N_towers = params_dict['N_towers']
+        self.N_tower_kinds = len(self.N_towers)
         
         #If manually specifying map:
         self.coordinates__obstacles = params_dict['coordinates__obstacles'] if\
@@ -60,24 +67,40 @@ class Environment():
         self.coordinates__tower_sites = params_dict['coordinates__tower_sites'] if\
         'coordinates__tower_sites' in params_dict else None        
 
-        self.obstructed_mask = None
-        self.distances_towers_targets = None
-        self.unobstructed_coverages = None
-        self.coordinates__solved_towers = None
+        self.obstructed_masks = []
+        self.distances_towers_targets = []
+        self.unobstructed_coverages = []
+        self.coordinates__solved_towers = []
         
-        self.coverage_matrix = None
+        self.coverage_matrices = None
         
         self.budget__total_cost = 100
         self.budget__tower_quotas = [999,999]
         self.budget__tower_unit_costs = [2,3]
-        self.N_tower_kinds = len(self.budget__tower_quotas)
+        
         
         self.N_iterations = 10 #Number iterations of Weighted L1. For this problem, seems to converge pretty fast (only a few iterations)
         
-        self.coverage_profile_type = params_dict['coverage_profile_type']
+        self.coverage_profile_types = params_dict['coverage_profile_types']
         self.figsize = (18,12)
         
+        self.VERBOSE = params_dict['VERBOSE']
         
+        def summarize_environment():
+            print self.PROBLEM_VARIATION
+            print self.random_seed
+            print self.map_dimensions
+            print self.N_obstacles
+            print self.N_targets
+            print self.N_tower_sites
+            print self.N_towers
+            print self.coverage_profile_types
+            print self.N_tower_kinds
+            print self.budget__total_cost
+            print self.budget__tower_quotas
+            print self.budget__tower_unit_costs
+            print '\n'*5
+        summarize_environment()
         
         
 
@@ -110,13 +133,11 @@ class Environment():
 #            rect3 = [(150,50),(70,50),(150,100),(70,100)]
 #            self.coordinates__obstacles = [rect1,rect2,rect3]
                 
+            
         def check_valid_placement(p,rect):
             x,y,w,h = rect
             valid = ~(x<=p[0] and y<=p[1] and p[0]<=x+w  and p[1]<=y+h)
             return valid
-        
-        
-        
         
         def place_targets():
             """
@@ -147,19 +168,23 @@ class Environment():
             THe optimization problem is to determine which of these possible 
             locations to use.
             """
-            coords = []
-            while len(coords)<self.N_tower_sites:
-                x = np.random.randint(0,self.map_dimensions[1]+1,size=1)[0]
-                y = np.random.randint(0,self.map_dimensions[0]+1,size=1)[0]
-                p = (x,y)
-                all_valid = True
-                for rect in self.coordinates__obstacles:
-                    if not check_valid_placement(p,rect):
-                        all_valid = False
-                        break
-                if all_valid:
-                    coords +=[p]
-            self.coordinates__tower_sites = coords            
+            self.coordinates__tower_sites = []
+            for tk in xrange(self.N_tower_kinds):
+                #Each kind of tower will have the correct number of sites placed
+                
+                coords = []
+                while len(coords)<self.N_tower_sites[tk]:
+                    x = np.random.randint(0,self.map_dimensions[1]+1,size=1)[0]
+                    y = np.random.randint(0,self.map_dimensions[0]+1,size=1)[0]
+                    p = (x,y)
+                    all_valid = True
+                    for rect in self.coordinates__obstacles:
+                        if not check_valid_placement(p,rect):
+                            all_valid = False
+                            break
+                    if all_valid:
+                        coords.append(p)
+                self.coordinates__tower_sites.append(coords)
             
         #If not already mnually specified then do random placement:
         if not self.coordinates__obstacles: place_obstacles()
@@ -167,26 +192,33 @@ class Environment():
         if not self.coordinates__tower_sites: place_allowed_tower_sites()
         print self.coordinates__targets
         print self.coordinates__tower_sites
-
-
+    
+    
     #Different coverage profiles: how well tower X covers (protects) target Y
     def coverage_profiles(self):
-        def fixed_radius():
-            radius = 10.
-            return np.where(self.distances_towers_targets <= radius, 1., 0.)
-        def inverse_r():
-            K = 50.
-            return 1. / (self.distances_towers_targets + K)
-        def inverse_r2():
-            K = 50.
-            return 1. / (self.distances_towers_targets + K)**2
+        def fixed_radius(A,radius):
+            return np.where(A <= radius, 1., 0.)
+        def inverse_r(A,K):
+            return 1. / (A + K)
+        def inverse_r2(A,K):
+            return 1. / (A + K)**2
         
-        if self.coverage_profile_type == 'fixed_radius': return fixed_radius()
-        if self.coverage_profile_type == 'inverse_r': return inverse_r()
-        if self.coverage_profile_type == 'inverse_r2': return inverse_r2()
-            
+        self.unobstructed_coverages = []
+        for tk in xrange(self.N_tower_kinds):
+            A = self.distances_towers_targets[tk]
+            radius = 15. #!!!!!!!
+            K = 2.
+            coverage_type = self.coverage_profile_types[tk]
+            if coverage_type == 'fixed_radius': self.unobstructed_coverages.append(fixed_radius(A,radius))
+            elif coverage_type == 'inverse_r': self.unobstructed_coverages.append(inverse_r(A,K))
+            elif coverage_type == 'inverse_r2': self.unobstructed_coverages.append(inverse_r2(A,K))
+            else: raise Exception('Must specify coverage profile types')
+        #print self.unobstructed_coverages
+        return self.unobstructed_coverages
 
-    #Calculate the voerage values for each tower to each target, depdending on
+
+
+    #Calculate the coverage values for each tower to each target, depdending on
     #coverage profiles and accountign for obstructions
     def get_tower_target_coverages(self):
 
@@ -213,23 +245,28 @@ class Environment():
             return False        
             
         def get_occluded():
-            self.obstructed_mask = np.zeros((self.N_targets,self.N_tower_sites))
-            #for r1,r2 in (self.coordinates__targets, self.coordinates__tower_sites):
-            for i, r1 in enumerate(self.coordinates__targets):
-                for j, r2 in enumerate(self.coordinates__tower_sites):
-                    obstructed = check_obstructed(r1,r2)
-#                    print obstructed
-#                    print
-                    if not obstructed:
-                        self.obstructed_mask[i][j] = 1.
+            for tk in xrange(self.N_tower_kinds):
+                mask = np.zeros((self.N_targets,self.N_tower_sites[tk]))
+                for i, r1 in enumerate(self.coordinates__targets):
+                    for j, r2 in enumerate(self.coordinates__tower_sites[tk]):
+                        obstructed = check_obstructed(r1,r2)
+#                        print obstructed
+#                        print
+                        if not obstructed:
+                            mask[i][j] = 1.
+                self.obstructed_masks += [mask]
 
         def get_tower_target_distances():
             #pairwise_distances
-            self.distances_towers_targets = pairwise_distances(
-                    self.coordinates__targets, 
-                    self.coordinates__tower_sites)
+            for tk in xrange(self.N_tower_kinds):
+                D = pairwise_distances(
+                        self.coordinates__targets, 
+                        self.coordinates__tower_sites[tk])
+                self.distances_towers_targets += [D]
 
         def get_unobstructed_coverages():
+            #for tk in xrange(self.N_tower_kinds):
+            #    self.unobstructed_coverages += [self.coverage_profiles(ttttt)]
             self.unobstructed_coverages = self.coverage_profiles()
             
             
@@ -237,15 +274,20 @@ class Environment():
             get_tower_target_distances()
             get_occluded()            
             get_unobstructed_coverages()
-            return self.unobstructed_coverages *  self.obstructed_mask
+            """print '------'
+            print self.unobstructed_coverages
+            print self.obstructed_masks
+            print self.N_tower_kinds
+            print '------' """
+            return [self.unobstructed_coverages[i] *  self.obstructed_masks[i] for i in xrange(self.N_tower_kinds)]
         
 
         
-        self.coverage_matrix = get_final_coverages()
-        print self.obstructed_mask
+        self.coverage_matrices = get_final_coverages()
+        print self.obstructed_masks
         print self.distances_towers_targets
         print self.unobstructed_coverages
-        print self.coverage_matrix
+        print self.coverage_matrices
      
 
 
@@ -257,16 +299,21 @@ class Environment():
         """
         fig=plt.figure(figsize=self.figsize)
         ax=plt.subplot(111)
+        #Plot the targets
         plt.plot([i[0] for i in self.coordinates__targets],\
                  [i[1] for i in self.coordinates__targets],\
-                 marker='x',markersize=15,linestyle='None',color='r',label='Target')
-        plt.plot([i[0] for i in self.coordinates__tower_sites],\
-                 [i[1] for i in self.coordinates__tower_sites],\
-                 marker='o',markersize=10,linestyle='None',color='k',label='Tower Sites')
+                 marker='x',markersize=15,linestyle='None',color='k',label='Target')
+        #Plot the towers
+        tower_colors = ['r','b','g']
+        for tk in xrange(self.N_tower_kinds):
+            plt.plot([i[0] for i in self.coordinates__tower_sites[tk]],\
+                     [i[1] for i in self.coordinates__tower_sites[tk]],\
+                     marker='o',markersize=10,linestyle='None',color=tower_colors[tk],alpha=.5,label='Tower {} Sites'.format(tk+1))
         if env_state == 'solved':
-            plt.plot([i[0] for i in self.coordinates__solved_towers],\
-                     [i[1] for i in self.coordinates__solved_towers],\
-                     marker='^',markersize=15,linestyle='None',color='g',label='Towers Placed')
+            for tk in xrange(self.N_tower_kinds):
+                plt.plot([i[0] for i in self.coordinates__solved_towers[tk]],\
+                         [i[1] for i in self.coordinates__solved_towers[tk]],\
+                         marker='^',markersize=20,linestyle='None',color=tower_colors[tk],label='Tower {} Placed'.format(tk+1))
         for x,y,w,h in self.coordinates__obstacles:
             r = plt.Rectangle((x,y),w,h,fc='c')
             ax.add_patch(r)
@@ -286,38 +333,88 @@ class Environment():
         L1 Heuristic to encourage sparse solutions and recover a viable solution 
         to the placement problem.
         """
-        a = 2. #1.
-        tau = 1e-2
-        m, n = self.coverage_matrix.shape
-        w = np.zeros(n)
-        for i in xrange(self.N_iterations):
-            x = cvx.Variable(n)
-            t = cvx.Variable(1)
         
-            objective = cvx.Maximize(t - x.T*w)
-            constraint = [0<=x, x<=1, t<=self.coverage_matrix*x, cvx.sum_entries(x)==self.N_towers]
-            cvx.Problem(objective, constraint).solve(verbose=True)
-            x = np.array(x.value).flatten()
-            w = a/(tau+np.abs(x))
-            plt.figure(figsize=(5,5))
-            plt.plot(x,marker='o')
-            plt.savefig('histrograms_{}.png'.format(i))
+        print 'PROBLEM_VARIATION: ', self.PROBLEM_VARIATION
+
+
+        if self.PROBLEM_VARIATION == 1:
+            #The first problem formulation
+            #K kinds of towers
+            #See more details about problem formulation in the writeup             
+            
+            #Get a full matrix of the concatenated coverage matrices for 
+            #each tower type. THis new matrix has dimensions:
+            #(Ntowers) x (sum(potential sites)), where the sum o=is over all tower types
+            C = -np.hstack(i for i in self.coverage_matrices)
+            print C
+            print C.shape            
+            
+            a = 2. #1.
+            tau = 1e-2
+            N = sum(i for i in self.N_tower_sites)
+#            print N
+            w = np.zeros(N)
+            for i in xrange(self.N_iterations):
+                
+                #
+                t = cvx.Variable(1)
+                #The concatenated vector of occupancies: Concatenated over all
+                #of the kinds of towers.
+                x = cvx.Variable(N)
+                
+                #Objective function includes penalty term for non-binary x values
+                objective = cvx.Maximize(t - x.T*w)
+                
+                #Main constraints on 0<=x<=1 and on t
+                constraints = [0<=x, x<=1, t<=C*x]
+                #And then for each kind of tower, append the constraint that there
+                #be exactly N_i towers 
+                for tk in xrange(self.N_tower_kinds):
+                    before_sum = np.concatenate(([0],np.cumsum(self.N_tower_sites)))[tk]
+#                    print before_sum
+#                    print before_sum + self.N_tower_sites[tk]
+#                    print
+                    constraints.append(cvx.sum_entries(
+                                    x[before_sum : before_sum + self.N_tower_sites[tk]]
+                                    )==self.N_towers[tk])
+                
+                print 'objective', objective
+                print 'constraints', constraints
+
+                cvx.Problem(objective, constraints).solve(verbose=self.VERBOSE)
+                x = np.array(x.value).flatten()
+                w = a/(tau+np.abs(x))
+                plt.figure(figsize=(5,5))
+                plt.plot(x,marker='o')
+                plt.savefig('histrograms_{}.png'.format(i))         
+            
+            
+            
+            
+            
+            
+            
             
         #From the solution x, get the coordinates of those tower sites where we
         #really do want to place a tower
         #use = np.isclose(x,1.)
-        inds = np.argsort(x)
-        s = x[inds]
-        use = np.where(s>.5)[0]
-#        print inds
-#        print s
-#        print use
-        if len(use) != self.N_towers:
-            print 'Solution did not converge properly. Choosing the K best towers.'
-            print self.N_towers, len(use)
-        use = use[-self.N_towers:]
-        self.coordinates__solved_towers = [self.coordinates__tower_sites[mm] for mm in inds[use]]
-        
+
+        for tk in xrange(self.N_tower_kinds):
+            before_sum = np.concatenate(([0],np.cumsum(self.N_tower_sites)))[tk]
+            y = x[before_sum : before_sum + self.N_tower_sites[tk]]
+            inds = np.argsort(y)
+            s = y[inds]
+            use = np.where(s>.5)[0]
+#            print inds
+#            print s
+#            print use            
+            if len(use) != self.N_towers[tk]:
+                print 'Solution did not converge properly. Choosing the K best towers.'
+                print self.N_towers[tk], len(use)
+            use = use[-self.N_towers[tk]:]
+            self.coordinates__solved_towers.append([self.coordinates__tower_sites[tk][mm] for mm in inds[use]])
+#        print self.coordinates__solved_towers
+#        print len(self.coordinates__solved_towers)
     
     
     
@@ -329,16 +426,20 @@ if __name__ == '__main__':
     # =============================================================================
     #     PARAMETERS
     # =============================================================================
+    NT = 28
     params_dict = {'random_seed':3312018,
+                   'PROBLEM_VARIATION':1,#2,3,4,5,6 #Which variation of the problem to do
                    'map_dimensions':(30,40),
-                   'N_obstacles':8,
-                   'N_targets':8,#266,
-                   'N_tower_sites':11,#302,
-                   'N_towers':2,
-                   'coverage_profile_type':'fixed_radius',
+                   'N_obstacles':18,
+                   'N_targets':NT,#266,
+                   'target_values':[1.]*NT,
+                   'N_tower_sites':[10,13],
+                   'N_towers':[3,4],
+                   'coverage_profile_types':['fixed_radius','fixed_radius'], #['fixed_radius','inverse_r','inverse_r2']
 #                   'coordinates__obstacles':[(0,0,44,44)],
 #                   'coordinates__targets':[(0,0),(88,66)],
 #                   'coordinates__tower_sites':[(99,107),(377,288)]
+                   'VERBOSE':True
                    }
         
     
