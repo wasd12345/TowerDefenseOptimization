@@ -9,11 +9,13 @@ Created on Sat Mar 31 21:19:36 2018
 
 EE 4650 Convex Optimization Final Project:
 
-Tower defense placement as a combinatorial optimization problem:
+Tower defense placement as a combinatorial optimization problem
+(More generally, a combinatorial resource allocation problem):
 
 Look at several different variations of tower defense placement optimization,
 i.e. how to optimally place defensive towers to protect various other point 
 structures.
+
 
 
 Several variations:
@@ -47,12 +49,15 @@ class Environment():
     
     def __init__(self,params_dict):
         
-        self.PROBLEM_VARIATION = params_dict['PROBLEM_VARIATION']
-        
+        self.penalty_type = params_dict['penalty_type']
+        self.objective_type = params_dict['objective_type']
+
         self.random_seed = params_dict['random_seed']
         self.map_dimensions = params_dict['map_dimensions']#height(y),width(x)
+        self.BORDER_MARGIN = params_dict['BORDER_MARGIN'] #For visualizing / debugging purposes make easier to see placements by not having on edges
         self.N_obstacles = params_dict['N_obstacles']
         self.N_targets = params_dict['N_targets']
+        self.target_values = params_dict['target_values']
         
         
         self.N_tower_sites = params_dict['N_tower_sites']
@@ -79,7 +84,7 @@ class Environment():
         self.budget__tower_unit_costs = [2,3]
         
         
-        self.N_iterations = 10 #Number iterations of Weighted L1. For this problem, seems to converge pretty fast (only a few iterations)
+        self.N_iterations_max = params_dict['N_iterations_max'] #Number iterations of Weighted L1. For this problem, seems to converge pretty fast (only a few iterations)
         
         self.coverage_profile_types = params_dict['coverage_profile_types']
         self.figsize = (18,12)
@@ -87,9 +92,9 @@ class Environment():
         self.VERBOSE = params_dict['VERBOSE']
         
         def summarize_environment():
-            print self.PROBLEM_VARIATION
             print self.random_seed
             print self.map_dimensions
+            print self.BORDER_MARGIN
             print self.N_obstacles
             print self.N_targets
             print self.N_tower_sites
@@ -101,6 +106,7 @@ class Environment():
             print self.budget__tower_unit_costs
             print '\n'*5
         summarize_environment()
+        
         
         
 
@@ -143,12 +149,12 @@ class Environment():
             """
             Place the target locations
             """
-            #xvals = np.random.randint(0,self.map_dimensions[1]+1,size=self.N_targets)
-            #yvals = np.random.randint(0,self.map_dimensions[0]+1,size=self.N_targets)
+
+            
             coords = []
             while len(coords)<self.N_targets:
-                x = np.random.randint(0,self.map_dimensions[1]+1,size=1)[0]
-                y = np.random.randint(0,self.map_dimensions[0]+1,size=1)[0]
+                x = np.random.randint(self.BORDER_MARGIN,self.map_dimensions[1]+1-self.BORDER_MARGIN,size=1)[0]
+                y = np.random.randint(self.BORDER_MARGIN,self.map_dimensions[0]+1-self.BORDER_MARGIN,size=1)[0]
                 p = (x,y)
                 all_valid = True
                 for rect in self.coordinates__obstacles:
@@ -174,9 +180,9 @@ class Environment():
                 
                 coords = []
                 while len(coords)<self.N_tower_sites[tk]:
-                    x = np.random.randint(0,self.map_dimensions[1]+1,size=1)[0]
-                    y = np.random.randint(0,self.map_dimensions[0]+1,size=1)[0]
-                    p = (x,y)
+                    x = np.random.randint(self.BORDER_MARGIN,self.map_dimensions[1]+1-self.BORDER_MARGIN,size=1)[0]
+                    y = np.random.randint(self.BORDER_MARGIN,self.map_dimensions[0]+1-self.BORDER_MARGIN,size=1)[0]
+                    p = (x,y)                   
                     all_valid = True
                     for rect in self.coordinates__obstacles:
                         if not check_valid_placement(p,rect):
@@ -207,7 +213,7 @@ class Environment():
         for tk in xrange(self.N_tower_kinds):
             A = self.distances_towers_targets[tk]
             radius = 15. #!!!!!!!
-            K = 2.
+            K = 1.
             coverage_type = self.coverage_profile_types[tk]
             if coverage_type == 'fixed_radius': self.unobstructed_coverages.append(fixed_radius(A,radius))
             elif coverage_type == 'inverse_r': self.unobstructed_coverages.append(inverse_r(A,K))
@@ -288,8 +294,14 @@ class Environment():
         print self.distances_towers_targets
         print self.unobstructed_coverages
         print self.coverage_matrices
-     
 
+
+     
+    def get_target_value_matrix(self):
+        """
+        asdasd
+        """
+        pass
 
 
     def visualize_environment(self,env_state):
@@ -303,6 +315,10 @@ class Environment():
         plt.plot([i[0] for i in self.coordinates__targets],\
                  [i[1] for i in self.coordinates__targets],\
                  marker='x',markersize=15,linestyle='None',color='k',label='Target')
+        plot_target_values = True
+        if plot_target_values:
+            for i ,t in enumerate(self.coordinates__targets):
+                plt.text(t[0],t[1],self.target_values[i])
         #Plot the towers
         tower_colors = ['r','b','g']
         for tk in xrange(self.N_tower_kinds):
@@ -334,63 +350,85 @@ class Environment():
         to the placement problem.
         """
         
-        print 'PROBLEM_VARIATION: ', self.PROBLEM_VARIATION
-
-
-        if self.PROBLEM_VARIATION == 1:
-            #The first problem formulation
-            #K kinds of towers
-            #See more details about problem formulation in the writeup             
-            
-            #Get a full matrix of the concatenated coverage matrices for 
-            #each tower type. THis new matrix has dimensions:
-            #(Ntowers) x (sum(potential sites)), where the sum o=is over all tower types
-            C = -np.hstack(i for i in self.coverage_matrices)
-            print C
-            print C.shape            
-            
+        #The first problem formulation
+        #K kinds of towers
+        #See more details about problem formulation in the writeup             
+        
+        #Get a full matrix of the concatenated coverage matrices for 
+        #each tower type. THis new matrix has dimensions:
+        #(Ntowers) x (sum(potential sites)), where the sum o=is over all tower types
+        coverage = np.hstack(i for i in self.coverage_matrices)
+        print coverage
+        print coverage.shape 
+        
+        #Diagonal matrix of the values of each target
+        V = np.diag(self.target_values)
+        
+        #Get the ad
+        C = np.dot(V,coverage)
+        print 'V', V
+        print 'coverage', coverage
+        print 'C', C
+        
+        
+        method = 2
+        
+        if method == 2:
             a = 2. #1.
-            tau = 1e-2
+            tau = 1e-4
             N = sum(i for i in self.N_tower_sites)
-#            print N
+    #            print N
             w = np.zeros(N)
-            for i in xrange(self.N_iterations):
-                
-                #
-                t = cvx.Variable(1)
+            ones = np.ones(N)
+            p = 1.
+            for i in xrange(self.N_iterations_max):
                 #The concatenated vector of occupancies: Concatenated over all
                 #of the kinds of towers.
                 x = cvx.Variable(N)
                 
+                if self.objective_type == 'min_entries':
+                    operation = cvx.min_entries
+                elif self.objective_type == 'sum_entries':
+                    operation = cvx.sum_entries
+                elif self.objective_type == 'max_entries':
+                    operation = cvx.max_entries
+                else:
+                    raise Exception('must specify objective_type')
+                    
                 #Objective function includes penalty term for non-binary x values
-                objective = cvx.Maximize(t - x.T*w)
-                
+                if self.penalty_type == 'reweighted_L1':
+                    #objective = cvx.Maximize(t - x.T*w)
+                    objective = cvx.Maximize(operation(C*x - x.T*w))
+                elif self.penalty_type == 'exponential':
+                    objective = cvx.Maximize(operation(C*x - ((x.T)**p)*ones))
+    
                 #Main constraints on 0<=x<=1 and on t
-                constraints = [0<=x, x<=1, t<=C*x]
+                constraints = [0<=x, x<=1]
                 #And then for each kind of tower, append the constraint that there
                 #be exactly N_i towers 
                 for tk in xrange(self.N_tower_kinds):
                     before_sum = np.concatenate(([0],np.cumsum(self.N_tower_sites)))[tk]
-#                    print before_sum
-#                    print before_sum + self.N_tower_sites[tk]
-#                    print
+                    print before_sum
+                    print before_sum + self.N_tower_sites[tk]
                     constraints.append(cvx.sum_entries(
                                     x[before_sum : before_sum + self.N_tower_sites[tk]]
                                     )==self.N_towers[tk])
-                
+                    print x[before_sum : before_sum + self.N_tower_sites[tk]]
+    
+                print 'penalty_type', self.penalty_type
+                print 'objective_type', self.objective_type
+                print 'operation', operation
                 print 'objective', objective
                 print 'constraints', constraints
-
                 cvx.Problem(objective, constraints).solve(verbose=self.VERBOSE)
                 x = np.array(x.value).flatten()
+                print 'x', x
                 w = a/(tau+np.abs(x))
+                p += 1.
                 plt.figure(figsize=(5,5))
                 plt.plot(x,marker='o')
-                plt.savefig('histrograms_{}.png'.format(i))         
-            
-            
-            
-            
+                plt.savefig('histrograms_{}.png'.format(i))    
+                print            
             
             
             
@@ -405,53 +443,86 @@ class Environment():
             inds = np.argsort(y)
             s = y[inds]
             use = np.where(s>.5)[0]
-#            print inds
-#            print s
-#            print use            
+            print inds
+            print s
+            print use            
             if len(use) != self.N_towers[tk]:
                 print 'Solution did not converge properly. Choosing the K best towers.'
                 print self.N_towers[tk], len(use)
             use = use[-self.N_towers[tk]:]
+            print use
             self.coordinates__solved_towers.append([self.coordinates__tower_sites[tk][mm] for mm in inds[use]])
 #        print self.coordinates__solved_towers
 #        print len(self.coordinates__solved_towers)
     
-    
-    
-        
+    def run_scenario(self):
+        """
+        Run the whole scenario.
+        Initialize map, solve placement, visualize everything.
+        """
+        self.initialize_random_map()
+        self.visualize_environment('initial')
+        self.get_tower_target_coverages()
+        self.solve_environment()
+        self.visualize_environment('solved') 
     
     
     
 if __name__ == '__main__':
+    
     # =============================================================================
     #     PARAMETERS
     # =============================================================================
-    NT = 28
-    params_dict = {'random_seed':3312018,
-                   'PROBLEM_VARIATION':1,#2,3,4,5,6 #Which variation of the problem to do
-                   'map_dimensions':(30,40),
-                   'N_obstacles':18,
-                   'N_targets':NT,#266,
-                   'target_values':[1.]*NT,
-                   'N_tower_sites':[10,13],
-                   'N_towers':[3,4],
-                   'coverage_profile_types':['fixed_radius','fixed_radius'], #['fixed_radius','inverse_r','inverse_r2']
-#                   'coordinates__obstacles':[(0,0,44,44)],
-#                   'coordinates__targets':[(0,0),(88,66)],
-#                   'coordinates__tower_sites':[(99,107),(377,288)]
-                   'VERBOSE':True
-                   }
-        
+    
+    #Which scenario to run
+    SCENARIO = 1 #1 #2 #3
+    
+    
+    
+    
+    
+    
     
     
     # =============================================================================
     #     MAIN
-    # =============================================================================
-    env = Environment(params_dict)
-    env.initialize_random_map()
-    env.visualize_environment('initial')
-    env.get_tower_target_coverages()
+    # =============================================================================    
+    
+    #SCENARIO !:
+    #Explanation:
+    #asdasdasdad
+    if SCENARIO == 1:
+        NTARGETS = 38
+        params_dict = {'random_seed':3312018,
+                       'objective_type':'sum_entries',#'min_entries','sum_entries'
+                       'penalty_type':'reweighted_L1',#'exponential','reweighted_L1'
+                       'N_iterations_max':4,
+                       'map_dimensions':(300,400),
+                       'BORDER_MARGIN':3,
+                       'N_obstacles':10,
+                       'N_targets':NTARGETS,#266,
+#                       'target_values': [1.]*(NTARGETS-1) + [9999.],
+                       'target_values': [9999.] + [1.]*(NTARGETS-1),
+#                       'target_values': [1.]*NTARGETS,
+                       'target_health': [10.]*NTARGETS,#!!!!!!!!!!!!!!!!not implemented yet to turn into probability protected
+                       'N_tower_sites':[733,5,7],#[10,13],
+                       'N_towers':[9,2,3],#[3,4],
+                       'coverage_profile_types':['fixed_radius','fixed_radius','fixed_radius'],#['fixed_radius','fixed_radius'], #['fixed_radius','inverse_r','inverse_r2']
+    #                   'coordinates__obstacles':[(0,0,44,44)],
+    #                   'coordinates__targets':[(0,0),(88,66)],
+    #                   'coordinates__tower_sites':[(99,107),(377,288)]
+                       'VERBOSE':True
+                       }
+        
+    
+    
+    if SCENARIO == 2:
+        params_dict = {
+                       }
+    
+    
+    
+    
 
-#    f=fffff    
-    env.solve_environment()
-    env.visualize_environment('solved')
+    env = Environment(params_dict)
+    env.run_scenario()
